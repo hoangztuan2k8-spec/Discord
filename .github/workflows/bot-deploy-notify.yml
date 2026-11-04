@@ -1,50 +1,51 @@
-name: Bot Status & Deployment Notifier
+name: Bot Status & Lifecycle Notifier
 
 on:
   push:
     branches: [ "main", "master" ]
+  repository_dispatch:
+    types: [bot-status] # Lắng nghe tín hiệu bật/tắt từ điện thoại
 
 jobs:
-  notify-update:
+  notify-discord:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies & Test syntax
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          echo "✅ Kiểm tra cú pháp mã nguồn thành công!"
-
-      - name: Send Rich Embed Notification to Discord
-        if: always()
+      - name: Send Lifecycle Notification to Discord
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          STATUS="${{ job.status }}"
-          if [ "$STATUS" == "success" ]; then
+          # Kiểm tra xem sự kiện kích hoạt là gì (Push code hay tín hiệu từ Bot)
+          EVENT_TYPE="${{ github.event_name }}"
+          
+          if [ "$EVENT_TYPE" == "push" ]; then
+            TITLE="✅ Cập Nhật Mã Nguồn Bot!"
+            DESC="Đã đẩy code mới lên kho lưu trữ GitHub."
             COLOR="3066993" # Xanh lá
-            TITLE="✅ Cập Nhật Mã Nguồn Bot Thành Công!"
-            DESC="Hệ thống đã kiểm tra mã nguồn và sẵn sàng vận hành."
-          else
-            COLOR="15158332" # Đỏ
-            TITLE="❌ Lỗi Cập Nhật Mã Nguồn Bot!"
-            DESC="Phát hiện lỗi cú pháp hoặc lỗi trong quá trình cài đặt thư viện."
+            AUTHOR="${{ github.actor }}"
+            DETAIL="Commit: ${{ github.event.head_commit.message }}"
+          elif [ "$EVENT_TYPE" == "repository_dispatch" ]; then
+            # Lấy trạng thái (online/offline) do điện thoại gửi lên
+            STATUS_MSG="${{ github.event.client_payload.status }}"
+            if [ "$STATUS_MSG" == "ONLINE" ]; then
+              TITLE="🟢 Bot Đã Trực Tuyến (Online)!"
+              DESC="Bot trên điện thoại đã khởi động và sẵn sàng hoạt động."
+              COLOR="5763719" # Xanh lá sáng
+            else
+              TITLE="🔴 Bot Đã Ngoại Tuyến (Offline)!"
+              DESC="Bot trên điện thoại đã bị tắt hoặc mất kết nối."
+              COLOR="15548997" # Đỏ
+            fi
+            AUTHOR="Điện Thoại (Termux)"
+            DETAIL="Trạng thái hệ thống thay đổi."
           fi
 
+          # Gửi tin nhắn qua Webhook
           PAYLOAD=$(jq -n \
-            --arg username "Trạm Quản Trị Bot" \
+            --arg username "Trạm Trạng Thái Bot" \
             --arg title "$TITLE" \
             --arg desc "$DESC" \
-            --arg commit "${{ github.event.head_commit.message }}" \
-            --arg author "${{ github.actor }}" \
-            --arg repo "${{ github.repository }}" \
+            --arg author "$AUTHOR" \
+            --arg detail "$DETAIL" \
             --arg color "$COLOR" \
             '{
               username: $username,
@@ -53,9 +54,8 @@ jobs:
                 description: $desc,
                 color: ($color | tonumber),
                 fields: [
-                  {name: "📂 Kho lưu trữ", value: $repo, inline: true},
-                  {name: "👤 Tác giả", value: $author, inline: true},
-                  {name: "💬 Nội dung Commit", value: $commit, inline: false}
+                  {name: "👤 Nguồn kích hoạt", value: $author, inline: true},
+                  {name: "📌 Chi tiết", value: $detail, inline: false}
                 ],
                 footer: {text: "Hệ thống tự động hóa GitHub Actions"}
               }]
